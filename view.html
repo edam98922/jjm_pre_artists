@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <title>이미지 슬라이더</title>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, user-scalable=no"
+    />
+
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #000;
+      }
+
+      .slider {
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+        touch-action: none; /* 기본 제스처 막고 우리가 처리 */
+      }
+
+      .slides {
+        display: flex;
+        width: 100%;
+        height: 100%;
+        transition: transform 0.35s ease;
+      }
+
+      .slide {
+        flex: 0 0 100%;
+        width: 100vw;
+        height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #000;
+      }
+
+      .slide img {
+        max-height: 100vh;
+        width: auto;
+        object-fit: contain;
+        display: block;
+        pointer-events: none; /* 이미지 위에서도 터치가 상위로 */
+        transition: transform 0.05s linear;
+      }
+
+      /* 페이지 정보: 가운데 하단 + 2초 후 숨김 */
+      .indicator {
+        position: absolute;
+        left: 50%;
+        bottom: 16px;
+        transform: translateX(-50%);
+        color: #fff;
+        font-size: 14px;
+        background: rgba(0, 0, 0, 0.4);
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont,
+          "Noto Sans KR", sans-serif;
+        opacity: 1;
+        transition: opacity 0.3s ease;
+      }
+
+      .indicator.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .message {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        color: #fff;
+        font-size: 16px;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont,
+          "Noto Sans KR", sans-serif;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="slider" id="slider">
+      <div class="slides" id="slides"></div>
+      <div class="indicator" id="indicator">0 / 0</div>
+      <div class="message" id="message" style="display: none"></div>
+    </div>
+
+    <script>
+      // ===== 1. URL 파라미터: id(세트 번호), count(이미지 개수) =====
+      const params = new URLSearchParams(window.location.search);
+      const idParam = params.get("id") || "1";
+      const countParam = params.get("count") || "1";
+
+      const pagePrefixNumber = parseInt(idParam, 10) || 1;
+      let imageCount = parseInt(countParam, 10);
+      if (!imageCount || imageCount < 1) imageCount = 1;
+
+      const imageFolder = "images";
+      const imagePrefix = `${pagePrefixNumber}_`;
+      const imageExt = ".jpg";
+
+      const slidesContainer = document.getElementById("slides");
+      const indicator = document.getElementById("indicator");
+      const messageEl = document.getElementById("message");
+      const slider = document.getElementById("slider");
+
+      const images = [];
+      for (let i = 1; i <= imageCount; i++) {
+        images.push(`${imageFolder}/${imagePrefix}${i}${imageExt}`);
+      }
+
+      let currentIndex = 0;
+      let total = images.length;
+
+      // ===== indicator 자동 숨김 =====
+      let indicatorHideTimeout = null;
+      function showIndicatorTemporarily() {
+        indicator.classList.remove("hidden");
+        if (indicatorHideTimeout) {
+          clearTimeout(indicatorHideTimeout);
+        }
+        indicatorHideTimeout = setTimeout(() => {
+          indicator.classList.add("hidden");
+        }, 2000); // 2초 후 숨김
+      }
+
+      // ===== 줌 / 팬 상태 =====
+      let scale = 1;
+      const MIN_SCALE = 1;
+      const MAX_SCALE = 4;
+
+      let translateX = 0;
+      let translateY = 0;
+
+      let isPinching = false;
+      let initialPinchDistance = 0;
+      let initialScale = 1;
+      let lastMidX = 0;
+      let lastMidY = 0;
+
+      let isDragging = false; // 슬라이드 스와이프용
+      let isPanning = false; // 줌 상태에서 이미지 이동용
+      let startX = 0; // 슬라이드 스와이프 시작 x
+      let panPrevX = 0;
+      let panPrevY = 0;
+
+      const SWIPE_THRESHOLD = 50;
+
+      function getSlides() {
+        return document.getElementsByClassName("slide");
+      }
+
+      // 현재 scale/translate에 맞게 이미지 transform 적용
+      function applyTransform() {
+        const slides = getSlides();
+        for (let i = 0; i < slides.length; i++) {
+          const img = slides[i].querySelector("img");
+          if (!img) continue;
+
+          if (i === currentIndex) {
+            img.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+          } else {
+            img.style.transform = "translate(0px, 0px) scale(1)";
+          }
+        }
+      }
+
+      // 화면 밖으로 너무 나가지 않도록 translateX/Y 제한
+      function clampPanForScale(newScale) {
+        const slides = getSlides();
+        const slide = slides[currentIndex];
+        if (!slide) return;
+        const img = slide.querySelector("img");
+        if (!img) return;
+
+        const rect = img.getBoundingClientRect(); // 현재 scale 상태의 크기
+        const vw = slider.clientWidth;
+        const vh = slider.clientHeight;
+
+        const prevScale = scale || 1;
+        // 현재 rect.width/height는 prevScale 기준 크기
+        const baseW = rect.width / prevScale;
+        const baseH = rect.height / prevScale;
+
+        const scaledW = baseW * newScale;
+        const scaledH = baseH * newScale;
+
+        // 가로 방향 클램프
+        if (scaledW <= vw) {
+          translateX = 0;
+        } else {
+          const maxOffsetX = (scaledW - vw) / 2;
+          if (translateX > maxOffsetX) translateX = maxOffsetX;
+          if (translateX < -maxOffsetX) translateX = -maxOffsetX;
+        }
+
+        // 세로 방향 클램프
+        if (scaledH <= vh) {
+          translateY = 0;
+        } else {
+          const maxOffsetY = (scaledH - vh) / 2;
+          if (translateY > maxOffsetY) translateY = maxOffsetY;
+          if (translateY < -maxOffsetY) translateY = -maxOffsetY;
+        }
+      }
+
+      function resetZoom() {
+        scale = 1;
+        translateX = 0;
+        translateY = 0;
+        applyTransform();
+      }
+
+      function updateSlide() {
+        if (total === 0) return;
+        const offset = -currentIndex * 100;
+        slidesContainer.style.transform = `translateX(${offset}vw)`;
+        indicator.textContent = `${currentIndex + 1} / ${total}`;
+        resetZoom();
+        showIndicatorTemporarily();
+      }
+
+      function buildSlides() {
+        if (total === 0) {
+          messageEl.style.display = "block";
+          messageEl.textContent = "표시할 이미지가 없습니다.";
+          indicator.textContent = "0 / 0";
+          return;
+        }
+
+        images.forEach((src) => {
+          const slide = document.createElement("div");
+          slide.className = "slide";
+
+          const img = document.createElement("img");
+          img.src = src;
+          img.alt = src;
+          img.loading = "lazy";
+
+          slide.appendChild(img);
+          slidesContainer.appendChild(slide);
+        });
+
+        updateSlide(); // 첫 진입시 1/N 표시
+        attachEvents();
+      }
+
+      function distance(t1, t2) {
+        const dx = t2.clientX - t1.clientX;
+        const dy = t2.clientY - t1.clientY;
+        return Math.hypot(dx, dy);
+      }
+
+      function midpoint(t1, t2) {
+        return {
+          x: (t1.clientX + t2.clientX) / 2,
+          y: (t1.clientY + t2.clientY) / 2,
+        };
+      }
+
+      function attachEvents() {
+        // 터치 시작
+        slider.addEventListener(
+          "touchstart",
+          (e) => {
+            if (total === 0) return;
+
+            if (e.touches.length === 2) {
+              // 핀치 시작
+              isPinching = true;
+              isDragging = false;
+              isPanning = false;
+
+              const [t1, t2] = e.touches;
+              initialPinchDistance = distance(t1, t2);
+              initialScale = scale;
+              const mid = midpoint(t1, t2);
+              lastMidX = mid.x;
+              lastMidY = mid.y;
+            } else if (e.touches.length === 1) {
+              // 한 손가락: 스와이프 or 팬
+              const touch = e.touches[0];
+              startX = touch.clientX;
+              isDragging = true;
+              isPanning = false;
+              panPrevX = touch.clientX;
+              panPrevY = touch.clientY;
+            }
+          },
+          { passive: false }
+        );
+
+        // 터치 이동
+        slider.addEventListener(
+          "touchmove",
+          (e) => {
+            if (total === 0) return;
+
+            if (e.touches.length === 2) {
+              // 핀치 줌 중
+              e.preventDefault();
+              isPinching = true;
+              const [t1, t2] = e.touches;
+              const dist = distance(t1, t2);
+              const mid = midpoint(t1, t2);
+
+              // 원래 계산된 배율 (클램프 전)
+              const rawScale = initialScale * (dist / initialPinchDistance);
+
+              // 클램프된 배율
+              let newScale = rawScale;
+              if (newScale < MIN_SCALE) newScale = MIN_SCALE;
+              if (newScale > MAX_SCALE) newScale = MAX_SCALE;
+
+              // 최소 배율(1배)에서 더 줄이려고 하는 구간:
+              // 위치/배율 모두 그대로, 중앙에 고정
+              if (initialScale <= MIN_SCALE && rawScale <= MIN_SCALE) {
+                scale = MIN_SCALE;
+                translateX = 0;
+                translateY = 0;
+                applyTransform();
+                return;
+              }
+
+              // 핀치 중심 이동에 따른 팬(단, newScale > 1일 때만 의미 있게)
+              if (newScale > MIN_SCALE) {
+                const dx = mid.x - lastMidX;
+                const dy = mid.y - lastMidY;
+                translateX += dx;
+                translateY += dy;
+              } else {
+                translateX = 0;
+                translateY = 0;
+              }
+
+              lastMidX = mid.x;
+              lastMidY = mid.y;
+
+              // 새 배율 기준으로 이동 한계 클램프
+              clampPanForScale(newScale);
+              scale = newScale;
+              applyTransform();
+            } else if (e.touches.length === 1) {
+              const touch = e.touches[0];
+
+              if (scale > 1) {
+                // 줌 상태에서 한 손가락 드래그 → 이미지 팬
+                e.preventDefault();
+                const dx = touch.clientX - panPrevX;
+                const dy = touch.clientY - panPrevY;
+                translateX += dx;
+                translateY += dy;
+                panPrevX = touch.clientX;
+                panPrevY = touch.clientY;
+                isPanning = true;
+
+                // 현재 scale 기준으로도 범위 클램프
+                clampPanForScale(scale);
+                applyTransform();
+              } else {
+                // scale === 1 → touchend에서 스와이프 판정
+              }
+            }
+          },
+          { passive: false }
+        );
+
+        // 터치 종료
+        slider.addEventListener(
+          "touchend",
+          (e) => {
+            if (total === 0) return;
+
+            // 핀치 제스처 끝
+            if (isPinching) {
+              if (e.touches.length >= 1) {
+                isPinching = false;
+                return;
+              } else {
+                isPinching = false;
+              }
+            }
+
+            if (!isDragging) return;
+
+            // 줌 상태에서 팬 했다면 → 슬라이드 넘기지 않음
+            if (scale > 1 || isPanning) {
+              isDragging = false;
+              isPanning = false;
+              return;
+            }
+
+            // 여기 오면 scale === 1, 스와이프 판정
+            const touch = e.changedTouches[0];
+            const endX = touch.clientX;
+            const diffX = endX - startX;
+
+            if (Math.abs(diffX) > SWIPE_THRESHOLD) {
+              if (diffX < 0 && currentIndex < total - 1) {
+                currentIndex++;
+              } else if (diffX > 0 && currentIndex > 0) {
+                currentIndex--;
+              }
+              updateSlide(); // 슬라이드 변경 + indicator 2초 표시
+            }
+
+            isDragging = false;
+            isPanning = false;
+          },
+          { passive: false }
+        );
+
+        // PC용 마우스 (테스트용)
+        let mouseDown = false;
+        let mouseStartX = 0;
+
+        slider.addEventListener("mousedown", (e) => {
+          if (total === 0) return;
+          mouseDown = true;
+          mouseStartX = e.clientX;
+        });
+
+        window.addEventListener("mouseup", (e) => {
+          if (!mouseDown || total === 0) return;
+          const diffX = e.clientX - mouseStartX;
+          if (Math.abs(diffX) > SWIPE_THRESHOLD && scale === 1) {
+            if (diffX < 0 && currentIndex < total - 1) {
+              currentIndex++;
+            } else if (diffX > 0 && currentIndex > 0) {
+              currentIndex--;
+            }
+            updateSlide();
+          }
+          mouseDown = false;
+        });
+      }
+
+      // 시작
+      buildSlides();
+    </script>
+  </body>
+</html>
