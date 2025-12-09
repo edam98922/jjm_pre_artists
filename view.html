@@ -83,7 +83,8 @@
 
         /* [핵심 3] max 함수: 홈바 영역(env)과 30px 중 '더 큰 값'을 선택 */
         /* 즉, 홈바가 있든 없든 최소 30px 이상은 무조건 띄움 */
-        bottom: max(30px, env(safe-area-inset-bottom));
+        /* bottom: max(30px, env(safe-area-inset-bottom)); */
+        bottom: calc(60px + env(safe-area-inset-bottom));
 
         color: #fff;
         font-size: 14px;
