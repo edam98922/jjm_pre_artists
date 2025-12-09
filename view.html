@@ -282,10 +282,15 @@
       }
 
       function attachEvents() {
+        // =========================================
+        // 1. 터치 이벤트 (Touch)
+        // =========================================
         slider.addEventListener(
           "touchstart",
           (e) => {
             if (total === 0) return;
+            // [핵심] 터치가 시작됐음을 알림!
+            isTouch = true;
             if (e.touches.length === 2) {
               isPinching = true;
               isDragging = false;
@@ -398,6 +403,81 @@
           { passive: false }
         );
       }
+
+      // =========================================
+      // [추가] PC 마우스 지원 (클릭 & 드래그)
+      // =========================================
+
+      // 1. 마우스 클릭 시작 (mousedown)
+      slider.addEventListener("mousedown", (e) => {
+        if (total === 0) return;
+        e.preventDefault(); // 이미지 드래그 방지
+
+        startX = e.clientX;
+        isDragging = true;
+        isPanning = false;
+
+        // 줌 상태일 때 이동(Pan)을 위한 초기 좌표 저장
+        panPrevX = e.clientX;
+        panPrevY = e.clientY;
+      });
+
+      // 2. 마우스 이동 중 (mousemove)
+      slider.addEventListener("mousemove", (e) => {
+        if (!isDragging) return; // 클릭 상태가 아니면 무시
+
+        // (A) 줌 상태일 때: 이미지 이동 (Panning)
+        if (scale > 1) {
+          e.preventDefault();
+          const dx = e.clientX - panPrevX;
+          const dy = e.clientY - panPrevY;
+
+          translateX += dx;
+          translateY += dy;
+
+          panPrevX = e.clientX;
+          panPrevY = e.clientY;
+          isPanning = true;
+
+          clampPanForScale(scale);
+          applyTransform();
+        }
+        // (B) 줌이 아닐 때(1배): 그냥 드래그 중 (아무것도 안 함, mouseup에서 처리)
+      });
+
+      // 3. 마우스 클릭 뗌 (mouseup) & 마우스가 화면 밖으로 나감 (mouseleave)
+      const stopMouseDrag = (e) => {
+        if (!isDragging) return;
+
+        // 줌 상태에서 이동 중이었다면 멈춤
+        if (scale > 1 || isPanning) {
+          isDragging = false;
+          isPanning = false;
+          return;
+        }
+
+        // 1배율 상태였다면 스와이프 판정
+        const endX = e.clientX;
+        const diffX = endX - startX;
+
+        if (Math.abs(diffX) > SWIPE_THRESHOLD) {
+          if (diffX < 0 && currentIndex < total - 1) {
+            // 왼쪽으로 드래그 -> 다음 장
+            currentIndex++;
+          } else if (diffX > 0 && currentIndex > 0) {
+            // 오른쪽으로 드래그 -> 이전 장
+            currentIndex--;
+          }
+          updateSlide();
+        }
+
+        isDragging = false;
+        isPanning = false;
+      };
+
+      // 마우스를 뗄 때와 화면 밖으로 나갈 때 둘 다 드래그 종료로 처리
+      slider.addEventListener("mouseup", stopMouseDrag);
+      slider.addEventListener("mouseleave", stopMouseDrag);
 
       buildSlides();
     </script>
