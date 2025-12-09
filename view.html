@@ -265,28 +265,27 @@
           indicator.textContent = "0 / 0";
           return;
         }
-        images.forEach((src) => {
+
+        // [수정 핵심] 여기 괄호 안에 ', index' 가 반드시 있어야 합니다!
+        images.forEach((src, index) => {
           const slide = document.createElement("div");
           slide.className = "slide";
           const img = document.createElement("img");
           img.src = src;
           img.alt = src;
 
-          // [최적화 핵심]
-          // 첫 번째 이미지(index === 0)는 무조건 빨리 받아오고(eager),
-          // 나머지는 화면에 올 때 받아오라(lazy)고 지시합니다.
+          // 이제 index가 무엇인지 알기 때문에 에러가 안 납니다.
           if (index === 0) {
-            img.loading = "eager"; // 즉시 로딩
-            img.fetchPriority = "high"; // (최신 브라우저 힌트) 우선순위 높음
+            img.loading = "eager";
+            img.fetchPriority = "high";
           } else {
-            img.loading = "lazy"; // 지연 로딩
+            img.loading = "lazy";
           }
-
-          // img.loading = "lazy";
 
           slide.appendChild(img);
           slidesContainer.appendChild(slide);
         });
+
         updateSlide();
         attachEvents();
       }
